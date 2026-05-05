@@ -18,7 +18,13 @@ TAXA_MUTACAO = 0.20
 FORCA_MUTACAO = 0.30
 
 START_POS = pygame.Vector2(100, 300)
-ALVO_POS = pygame.Vector2(700, 300)
+def gerar_alvo():
+    return pygame.Vector2(
+        random.randint(150, LARGURA - 150),
+        random.randint(100, ALTURA - 100)
+    )
+
+ALVO_POS = gerar_alvo()
 ENTREGA_POS = ALVO_POS
 RAIO_CHEGADA = 20
 
@@ -201,6 +207,8 @@ while running:
 
         salvar_melhor(agentes, CHECKPOINT_SAIDA)
         agentes = nova_geracao(agentes, geracao)
+        ALVO_POS = gerar_alvo()
+        ENTREGA_POS = ALVO_POS
         geracao += 1
         tempo = 0.0
 

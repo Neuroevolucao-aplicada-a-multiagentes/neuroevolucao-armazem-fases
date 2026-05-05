@@ -1,6 +1,8 @@
 import pygame
 import random
 import math
+import csv
+import os
 from rede_transfer import RedeNeural, carregar_rede_base, salvar_melhor
 
 LARGURA = 900
@@ -9,59 +11,123 @@ FPS = 60
 VELOCIDADE = 200.0
 DIAGONAL = math.sqrt(LARGURA**2 + ALTURA**2)
 
-NUM_AGENTES = 30
-DURACAO_GERACAO = 25
+NUM_AGENTES = 60
+DURACAO_GERACAO = 45
 ELITE = 4
-TAXA_MUTACAO = 0.2
-FORCA_MUTACAO = 0.3
+TAXA_MUTACAO = 0.35
+FORCA_MUTACAO = 0.45
 
 START_POS = pygame.Vector2(100, 300)
 RAIO_COLETA = 20
 RAIO_ENTREGA = 35
 
-CHECKPOINT_ENTRADA = "melhor_rede_fase1.npz"
-CHECKPOINT_SAIDA = "melhor_rede_fase2.npz"
+CHECKPOINT_ENTRADA = "melhor_rede_fase4_1.npz"
+CHECKPOINT_SAIDA = "melhor_rede_fase4_2.npz"
 
-FASE_NOME = "Fase 2 — Coleta e Entrega com posições variáveis"
+ARQUIVO_RESULTADOS = "resultados_fase4_2.csv"
+
+FASE_NOME = "Fase 4.2 — generalização com checkpoint"
+
 USA_VARIACAO = True
-USA_OBSTACULOS = False
+USA_OBSTACULOS = True
 
 PACOTE_FIXO = pygame.Vector2(500, 200)
 ENTREGA_FIXA = pygame.Vector2(750, 450)
 
-OBSTACULOS = []
+OBSTACULOS = [
+    pygame.Rect(570, 285, 70, 120),
+    pygame.Rect(360, 330, 70, 120),
+    pygame.Rect(650, 120, 70, 110),
+]
 
 
-def gerar_start():
-    return pygame.Vector2(
-        random.randint(80, 180),
-        random.randint(150, 450)
-    )
+def inicializar_csv():
+    if not os.path.exists(ARQUIVO_RESULTADOS):
+        with open(ARQUIVO_RESULTADOS, mode="w", newline="", encoding="utf-8") as arquivo:
+            writer = csv.writer(arquivo)
+            writer.writerow([
+                "geracao",
+                "fitness_medio",
+                "fitness_melhor",
+                "coletas",
+                "entregas",
+                "colisoes",
+                "melhor_tempo",
+                "pacote_x",
+                "pacote_y",
+                "entrega_x",
+                "entrega_y"
+            ])
+
+
+def salvar_resultado_csv(
+    geracao,
+    fitness_medio,
+    fitness_melhor,
+    coletas,
+    entregas,
+    colisoes,
+    melhor_tempo,
+    pacote_pos,
+    entrega_pos
+):
+    with open(ARQUIVO_RESULTADOS, mode="a", newline="", encoding="utf-8") as arquivo:
+        writer = csv.writer(arquivo)
+        writer.writerow([
+            geracao,
+            round(fitness_medio, 3),
+            round(fitness_melhor, 3),
+            coletas,
+            entregas,
+            colisoes,
+            round(melhor_tempo, 3),
+            round(pacote_pos.x, 3),
+            round(pacote_pos.y, 3),
+            round(entrega_pos.x, 3),
+            round(entrega_pos.y, 3)
+        ])
+
+
+def posicao_valida(pos):
+    rect = pygame.Rect(int(pos.x - 12), int(pos.y - 12), 24, 24)
+
+    for obstaculo in OBSTACULOS:
+        if rect.colliderect(obstaculo):
+            return False
+
+    return True
+
+
+def gerar_posicao_valida(x_min, x_max, y_min, y_max):
+    for _ in range(200):
+        pos = pygame.Vector2(
+            random.randint(x_min, x_max),
+            random.randint(y_min, y_max)
+        )
+
+        if posicao_valida(pos):
+            return pos
+
+    return pygame.Vector2((x_min + x_max) // 2, (y_min + y_max) // 2)
 
 
 def gerar_posicoes():
     if not USA_VARIACAO:
         return pygame.Vector2(PACOTE_FIXO), pygame.Vector2(ENTREGA_FIXA)
 
-    pacote = pygame.Vector2(
-        random.randint(200, LARGURA - 200),
-        random.randint(100, ALTURA - 100)
-    )
-
-    entrega = pygame.Vector2(
-        random.randint(200, LARGURA - 200),
-        random.randint(100, ALTURA - 100)
-    )
+    pacote = gerar_posicao_valida(150, 800, 80, 520)
+    entrega = gerar_posicao_valida(150, 820, 80, 520)
 
     tentativas = 0
-    while entrega.distance_to(pacote) < 200 and tentativas < 200:
-        entrega = pygame.Vector2(
-            random.randint(200, LARGURA - 200),
-            random.randint(100, ALTURA - 100)
-        )
+    while entrega.distance_to(pacote) < 250 and tentativas < 200:
+        entrega = gerar_posicao_valida(150, 820, 80, 520)
         tentativas += 1
 
     return pacote, entrega
+
+
+def gerar_start():
+    return gerar_posicao_valida(80, 200, 150, 450)
 
 
 PACOTE_POS, ENTREGA_POS = gerar_posicoes()
@@ -69,12 +135,14 @@ PACOTE_POS, ENTREGA_POS = gerar_posicoes()
 
 class Agente:
     def __init__(self, rede_base=None, mutar=False):
-        self.pos = gerar_start()
+        self.start_pos = gerar_start()
+        self.pos = pygame.Vector2(self.start_pos)
         self.vel = pygame.Vector2(0, 0)
+
         self.brain = rede_base.copy() if rede_base is not None else RedeNeural()
 
         if mutar:
-            self.brain.mutate(rate=0.15, strength=0.20)
+            self.brain.mutate(rate=0.20, strength=0.30)
 
         self.fitness = 0.0
         self.carregando = False
@@ -91,7 +159,8 @@ class Agente:
         self.distancia_percorrida = 0.0
 
     def resetar(self):
-        self.pos = gerar_start()
+        self.start_pos = gerar_start()
+        self.pos = pygame.Vector2(self.start_pos)
         self.vel = pygame.Vector2(0, 0)
 
         self.fitness = 0.0
@@ -112,9 +181,34 @@ class Agente:
         return ENTREGA_POS if self.carregando else PACOTE_POS
 
     def ponto_mais_proximo_obstaculo(self):
-        return pygame.Vector2(self.pos.x + DIAGONAL, self.pos.y)
+        if not USA_OBSTACULOS or len(OBSTACULOS) == 0:
+            return pygame.Vector2(self.pos.x + DIAGONAL, self.pos.y)
+
+        menor_dist = float("inf")
+        ponto_mais_proximo = pygame.Vector2(0, 0)
+
+        for obstaculo in OBSTACULOS:
+            px = max(obstaculo.left, min(self.pos.x, obstaculo.right))
+            py = max(obstaculo.top, min(self.pos.y, obstaculo.bottom))
+            ponto = pygame.Vector2(px, py)
+            dist = self.pos.distance_to(ponto)
+
+            if dist < menor_dist:
+                menor_dist = dist
+                ponto_mais_proximo = ponto
+
+        return ponto_mais_proximo
 
     def colidiu_obstaculo(self, nova_pos):
+        if not USA_OBSTACULOS:
+            return False
+
+        rect = pygame.Rect(int(nova_pos.x - 8), int(nova_pos.y - 8), 16, 16)
+
+        for obstaculo in OBSTACULOS:
+            if rect.colliderect(obstaculo):
+                return True
+
         return False
 
     def montar_inputs(self, alvo):
@@ -148,6 +242,7 @@ class Agente:
             return
 
         self.tempo_vivo += dt
+
         alvo = self.alvo_atual()
         inputs, dist = self.montar_inputs(alvo)
 
@@ -160,11 +255,34 @@ class Agente:
         self.vel = nova_vel
         deslocamento = self.vel * VELOCIDADE * dt
 
-        self.pos += deslocamento
-        self.pos.x = max(10, min(LARGURA - 10, self.pos.x))
-        self.pos.y = max(10, min(ALTURA - 10, self.pos.y))
+        colidiu = False
 
-        self.distancia_percorrida += deslocamento.length()
+        nova_pos_x = pygame.Vector2(self.pos.x + deslocamento.x, self.pos.y)
+        nova_pos_x.x = max(10, min(LARGURA - 10, nova_pos_x.x))
+
+        if self.colidiu_obstaculo(nova_pos_x):
+            colidiu = True
+        else:
+            self.pos.x = nova_pos_x.x
+
+        nova_pos_y = pygame.Vector2(self.pos.x, self.pos.y + deslocamento.y)
+        nova_pos_y.y = max(10, min(ALTURA - 10, nova_pos_y.y))
+
+        if self.colidiu_obstaculo(nova_pos_y):
+            colidiu = True
+        else:
+            self.pos.y = nova_pos_y.y
+
+        if not colidiu:
+            self.distancia_percorrida += deslocamento.length()
+
+        if colidiu and not self.em_colisao:
+            self.colisoes += 1
+            self.fitness -= 220
+            self.em_colisao = True
+
+        if not colidiu:
+            self.em_colisao = False
 
         dist_nova = self.pos.distance_to(alvo)
 
@@ -211,6 +329,9 @@ class Agente:
                 self.dist_anterior = None
                 self.melhor_dist_alvo = None
 
+        if self.colisoes > 0:
+            self.fitness -= self.colisoes * 0.2
+
     def desenhar(self, screen):
         if self.entregou:
             cor = (80, 255, 120)
@@ -241,14 +362,15 @@ def nova_geracao(agentes, geracao):
         key=lambda a: (
             a.entregou,
             a.coletou,
+            -a.colisoes,
             -a.tempo_entrega if a.tempo_entrega is not None else -999,
             a.fitness
         ),
         reverse=True
     )
 
-    taxa = max(0.08, TAXA_MUTACAO * (0.98 ** geracao))
-    forca = max(0.12, FORCA_MUTACAO * (0.98 ** geracao))
+    taxa = max(0.12, TAXA_MUTACAO * (0.985 ** geracao))
+    forca = max(0.18, FORCA_MUTACAO * (0.985 ** geracao))
 
     novos = []
 
@@ -281,6 +403,8 @@ pygame.display.set_caption(FASE_NOME)
 clock = pygame.time.Clock()
 font_sm = pygame.font.SysFont(None, 22)
 
+inicializar_csv()
+
 rede_base = carregar_rede_base(CHECKPOINT_ENTRADA)
 agentes = criar_populacao(rede_base)
 
@@ -290,6 +414,7 @@ tempo = 0.0
 historico_fitness = []
 historico_coletas = []
 historico_entregas = []
+historico_colisoes = []
 historico_melhor_tempo = []
 
 running = True
@@ -312,12 +437,15 @@ while running:
 
     for x in range(0, LARGURA, 75):
         pygame.draw.line(screen, (40, 45, 58), (x, 0), (x, ALTURA))
-
     for y in range(0, ALTURA, 75):
         pygame.draw.line(screen, (40, 45, 58), (0, y), (LARGURA, y))
 
     pygame.draw.line(screen, (50, 60, 80), START_POS, PACOTE_POS, 1)
     pygame.draw.line(screen, (50, 60, 80), PACOTE_POS, ENTREGA_POS, 1)
+
+    for obstaculo in OBSTACULOS:
+        pygame.draw.rect(screen, (160, 80, 80), obstaculo)
+        pygame.draw.rect(screen, (255, 120, 120), obstaculo, 2)
 
     pygame.draw.circle(screen, (100, 100, 140), START_POS, 8, 2)
     screen.blit(
@@ -349,9 +477,10 @@ while running:
 
     coletaram = sum(1 for a in agentes if a.coletou)
     entregaram = sum(1 for a in agentes if a.entregou)
+    colisoes = sum(a.colisoes for a in agentes)
     fit_medio = sum(a.fitness for a in agentes) / NUM_AGENTES
     fit_melhor = max(a.fitness for a in agentes)
-    taxa_atual = max(0.08, TAXA_MUTACAO * (0.98 ** geracao))
+    taxa_atual = max(0.12, TAXA_MUTACAO * (0.985 ** geracao))
 
     tempos_entrega = [a.tempo_entrega for a in agentes if a.tempo_entrega is not None]
     melhor_tempo = min(tempos_entrega) if tempos_entrega else 0
@@ -361,6 +490,7 @@ while running:
         f"Tempo: {tempo:.1f}s / {DURACAO_GERACAO}s",
         f"Coletaram: {coletaram} / {NUM_AGENTES}",
         f"Entregaram: {entregaram} / {NUM_AGENTES}",
+        f"Colisões: {colisoes}",
         f"Fitness médio: {fit_medio:.1f}",
         f"Fitness melhor: {fit_melhor:.1f}",
         f"Melhor tempo: {melhor_tempo:.1f}s",
@@ -368,10 +498,11 @@ while running:
         FASE_NOME,
         f"Carrega: {CHECKPOINT_ENTRADA}",
         f"Salva: {CHECKPOINT_SAIDA}",
+        f"Resultados: {ARQUIVO_RESULTADOS}",
         "SPACE = pular geração",
     ]
 
-    hud = pygame.Surface((390, len(linhas) * 22 + 10), pygame.SRCALPHA)
+    hud = pygame.Surface((410, len(linhas) * 22 + 10), pygame.SRCALPHA)
     hud.fill((0, 0, 0, 150))
     screen.blit(hud, (5, 5))
 
@@ -411,16 +542,17 @@ while running:
         escala_eventos = max_fitness / NUM_AGENTES
 
         desenhar_curva(historico_fitness, (100, 200, 255), max_fitness)
-        desenhar_curva(
-            [c * escala_eventos for c in historico_coletas],
-            (255, 220, 80),
-            max_fitness
-        )
-        desenhar_curva(
-            [e * escala_eventos for e in historico_entregas],
-            (80, 255, 120),
-            max_fitness
-        )
+        desenhar_curva([c * escala_eventos for c in historico_coletas], (255, 220, 80), max_fitness)
+        desenhar_curva([e * escala_eventos for e in historico_entregas], (80, 255, 120), max_fitness)
+
+        pygame.draw.line(screen, (100, 200, 255), (gx + 8, gy + gh - 8), (gx + 28, gy + gh - 8), 2)
+        screen.blit(font_sm.render("fit", True, (100, 200, 255)), (gx + 32, gy + gh - 15))
+
+        pygame.draw.line(screen, (255, 220, 80), (gx + 70, gy + gh - 8), (gx + 90, gy + gh - 8), 2)
+        screen.blit(font_sm.render("coleta", True, (255, 220, 80)), (gx + 94, gy + gh - 15))
+
+        pygame.draw.line(screen, (80, 255, 120), (gx + 145, gy + gh - 8), (gx + 165, gy + gh - 8), 2)
+        screen.blit(font_sm.render("entrega", True, (80, 255, 120)), (gx + 169, gy + gh - 15))
 
     pygame.display.flip()
 
@@ -429,6 +561,7 @@ while running:
         fit_melhor_f = max(a.fitness for a in agentes)
         coletas_f = sum(1 for a in agentes if a.coletou)
         entregas_f = sum(1 for a in agentes if a.entregou)
+        colisoes_f = sum(a.colisoes for a in agentes)
 
         tempos_entrega_f = [a.tempo_entrega for a in agentes if a.tempo_entrega is not None]
         melhor_tempo_f = min(tempos_entrega_f) if tempos_entrega_f else 0
@@ -436,7 +569,20 @@ while running:
         historico_fitness.append(fit_medio_f)
         historico_coletas.append(coletas_f)
         historico_entregas.append(entregas_f)
+        historico_colisoes.append(colisoes_f)
         historico_melhor_tempo.append(melhor_tempo_f)
+
+        salvar_resultado_csv(
+            geracao,
+            fit_medio_f,
+            fit_melhor_f,
+            coletas_f,
+            entregas_f,
+            colisoes_f,
+            melhor_tempo_f,
+            PACOTE_POS,
+            ENTREGA_POS
+        )
 
         print(
             f"Geração {geracao:3d} | "
@@ -444,6 +590,7 @@ while running:
             f"Melhor: {fit_melhor_f:8.1f} | "
             f"Coletaram: {coletas_f:2d} | "
             f"Entregaram: {entregas_f:2d} | "
+            f"Colisões: {colisoes_f:3d} | "
             f"Melhor tempo: {melhor_tempo_f:.1f}s"
         )
 
@@ -458,3 +605,5 @@ while running:
 
 pygame.quit()
 print("\nSimulação encerrada.")
+if historico_entregas:
+    print(f"Entregas na última geração: {historico_entregas[-1]}/{NUM_AGENTES}")
