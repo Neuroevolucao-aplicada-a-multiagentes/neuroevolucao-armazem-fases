@@ -1,4 +1,4 @@
-from config_fase4_2 import CONFIG
+from config_fase5 import CONFIG
 from treinar import treinar
 
 if __name__ == "__main__":
