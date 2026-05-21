@@ -6,6 +6,10 @@ pygame>=2.5
 pandas>=2.0
 matplotlib>=3.7
 
+# Supabase (para integração com banco de dados)
+supabase>=2.0.0
+python-dotenv>=0.19.0
+
 # Testado com:
 #   numpy 2.4.2
 #   pygame 2.6.1
