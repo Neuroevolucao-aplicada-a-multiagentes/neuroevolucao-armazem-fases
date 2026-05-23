@@ -22,13 +22,19 @@ Thumbs.db
 # Arquivos temporários
 *.tmp
 
-# Pesos/modelos salvos
+# Pesos/modelos salvos (reproduziveis via treino)
 *.npz
 
-# Pygame screenshots/gravações
-*.png
-*.jpg
+# Resultados individuais de execucao (CSVs + PNGs gerados por treino)
+runs/
+
+# Midia gerada
 *.mp4
+*.jpg
 
 # Banco de dados
 *.db
+
+# Ignora PNGs em qualquer lugar, MAS preserva os da pasta figuras/
+*.png
+!figuras/*.png
