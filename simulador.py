@@ -54,6 +54,7 @@ class CenarioConfig:
     bonus_tempo_factor: float = 50.0
     peso_progresso: float = 12.0
     peso_alinhamento: float = 0.05
+    peso_gradiente_inverso: float = 0.0
     penalidade_colisao: float = 220.0
     penalidade_parado: float = 0.05
     penalidade_distancia_factor: float = 0.02
@@ -61,6 +62,11 @@ class CenarioConfig:
 
     bonus_proximidade_max: float = 1500.0
     pool_selecao_fracao: float = 0.5
+
+    num_obstaculos: int = 3
+    obstaculos_no_caminho: bool = False
+    offset_obstaculo_perpendicular: int = 40
+    num_obstaculos_extra_livres: int = 0
 
 
 def _vec(x, y) -> pygame.Vector2:
@@ -92,6 +98,95 @@ def gerar_obstaculos_aleatorios(n: int, rng: random.Random,
                 break
         if ok:
             obstaculos.append(rect)
+    return obstaculos
+
+
+def gerar_obstaculos_no_caminho(segmentos: List[Tuple[pygame.Vector2, pygame.Vector2]],
+                                n_por_segmento: int,
+                                rng: random.Random,
+                                exclude_zones: List[Tuple[int, int, int]] = None,
+                                offset_perp: int = 40) -> List[pygame.Rect]:
+    """Posiciona obstaculos PERTO do caminho start->pacote->entrega para forcar desvio.
+
+    Para cada segmento (origem, destino), n_por_segmento obstaculos sao colocados
+    em pontos ao longo do segmento, com deslocamento perpendicular aleatorio
+    (+/- offset_perp px) - o agente NAO consegue ir reto, mas sempre tem espaco
+    para contornar por um dos lados.
+
+    Argumentos:
+        segmentos: lista de pares (origem, destino) que definem o caminho ideal.
+        n_por_segmento: quantos obstaculos por trecho.
+        rng: gerador de aleatorios para reprodutibilidade.
+        exclude_zones: lista de (cx, cy, raio) que nao podem ter obstaculo em cima.
+        offset_perp: deslocamento maximo perpendicular ao segmento (px).
+    """
+    obstaculos: List[pygame.Rect] = []
+    exclude_zones = exclude_zones or []
+    margem_borda = 50
+
+    for origem, destino in segmentos:
+        dx = destino.x - origem.x
+        dy = destino.y - origem.y
+        comprimento = math.sqrt(dx * dx + dy * dy)
+        if comprimento < 50:
+            continue
+        ux, uy = dx / comprimento, dy / comprimento
+        perp_x, perp_y = -uy, ux
+
+        if n_por_segmento == 1:
+            ts = [0.5]
+        else:
+            espaco = 0.6 / max(n_por_segmento - 1, 1)
+            inicio = 0.5 - 0.3
+            ts = [inicio + i * espaco for i in range(n_por_segmento)]
+
+        for t in ts:
+            colocado = False
+            for tentativa in range(40):
+                t_real = t + rng.uniform(-0.04, 0.04)
+                offset = rng.uniform(-offset_perp, offset_perp)
+                if abs(offset) < 12:
+                    offset = 12 * (1 if offset >= 0 else -1)
+
+                cx = origem.x + dx * t_real + perp_x * offset
+                cy = origem.y + dy * t_real + perp_y * offset
+
+                w = rng.randint(45, 75)
+                h = rng.randint(55, 100)
+                x = int(cx - w / 2)
+                y = int(cy - h / 2)
+
+                if x < margem_borda or x + w > LARGURA - margem_borda:
+                    continue
+                if y < margem_borda or y + h > ALTURA - margem_borda:
+                    continue
+
+                rect = pygame.Rect(x, y, w, h)
+                rect_check = rect.inflate(30, 30)
+
+                raio_obs = max(w, h) / 2
+                cx_obs, cy_obs = rect.centerx, rect.centery
+                colisao_zona = False
+                for zx, zy, zr in exclude_zones:
+                    dist = math.sqrt((cx_obs - zx) ** 2 + (cy_obs - zy) ** 2)
+                    if dist < zr + raio_obs + 15:
+                        colisao_zona = True
+                        break
+                if colisao_zona:
+                    continue
+
+                colisao_outro = False
+                for outro in obstaculos:
+                    if rect_check.colliderect(outro.inflate(25, 25)):
+                        colisao_outro = True
+                        break
+                if colisao_outro:
+                    continue
+
+                obstaculos.append(rect)
+                colocado = True
+                break
+
     return obstaculos
 
 
@@ -130,25 +225,51 @@ class Ambiente:
     def resetar_cenario(self):
         cfg = self.config
 
-        if cfg.usa_obstaculos and cfg.obstaculos_fixos:
-            self.obstaculos = [pygame.Rect(*o) for o in cfg.obstaculos_fixos]
-        elif cfg.usa_obstaculos:
-            zonas = [
-                (cfg.start_fixo[0], cfg.start_fixo[1], 60),
-                (self.pacote_pos.x, self.pacote_pos.y, 50),
-                (self.entrega_pos.x, self.entrega_pos.y, 60),
-            ]
-            self.obstaculos = gerar_obstaculos_aleatorios(3, self.rng, zonas)
-        else:
-            self.obstaculos = []
-
+        self.start_pos = _vec(*cfg.start_fixo)
+        self.obstaculos = []
         if cfg.usa_variacao_posicoes:
             self.pacote_pos, self.entrega_pos = self._gerar_posicoes_validas()
         else:
             self.pacote_pos = _vec(*cfg.pacote_fixo)
             self.entrega_pos = _vec(*cfg.entrega_fixa)
 
-        self.start_pos = _vec(*cfg.start_fixo)
+        if cfg.usa_obstaculos and cfg.obstaculos_fixos:
+            self.obstaculos = [pygame.Rect(*o) for o in cfg.obstaculos_fixos]
+        elif cfg.usa_obstaculos:
+            zonas = [
+                (self.start_pos.x, self.start_pos.y, 60),
+                (self.pacote_pos.x, self.pacote_pos.y, 50),
+                (self.entrega_pos.x, self.entrega_pos.y, 60),
+            ]
+            obstaculos_caminho: List[pygame.Rect] = []
+            if cfg.obstaculos_no_caminho and cfg.num_obstaculos > 0:
+                segmentos = [
+                    (self.start_pos, self.pacote_pos),
+                    (self.pacote_pos, self.entrega_pos),
+                ]
+                if cfg.objetivo_simples:
+                    segmentos = [(self.start_pos, self.pacote_pos)]
+                n_por_seg = max(1, cfg.num_obstaculos // len(segmentos))
+                obstaculos_caminho = gerar_obstaculos_no_caminho(
+                    segmentos, n_por_seg, self.rng, zonas,
+                    offset_perp=cfg.offset_obstaculo_perpendicular,
+                )
+            elif (not cfg.obstaculos_no_caminho) and cfg.num_obstaculos > 0:
+                obstaculos_caminho = gerar_obstaculos_aleatorios(
+                    cfg.num_obstaculos, self.rng, zonas,
+                )
+
+            obstaculos_livres: List[pygame.Rect] = []
+            if cfg.num_obstaculos_extra_livres > 0:
+                zonas_estendidas = zonas + [
+                    (o.centerx, o.centery, max(o.width, o.height) / 2 + 20)
+                    for o in obstaculos_caminho
+                ]
+                obstaculos_livres = gerar_obstaculos_aleatorios(
+                    cfg.num_obstaculos_extra_livres, self.rng, zonas_estendidas,
+                )
+
+            self.obstaculos = obstaculos_caminho + obstaculos_livres
 
         self.robos_moveis = []
         for _ in range(cfg.num_robos_moveis):
@@ -252,12 +373,18 @@ class Agente:
         dy_alvo = alvo.y - self.pos.y
         dist_alvo = self.pos.distance_to(alvo)
 
+        dir_alvo_x = dx_alvo / (dist_alvo + 1e-6)
+        dir_alvo_y = dy_alvo / (dist_alvo + 1e-6)
+
         if amb.config.objetivo_simples:
-            dx_ent = dx_alvo
-            dy_ent = dy_alvo
+            dir_ent_x = dir_alvo_x
+            dir_ent_y = dir_alvo_y
         else:
             dx_ent = amb.entrega_pos.x - self.pos.x
             dy_ent = amb.entrega_pos.y - self.pos.y
+            dist_ent = math.sqrt(dx_ent * dx_ent + dy_ent * dy_ent)
+            dir_ent_x = dx_ent / (dist_ent + 1e-6)
+            dir_ent_y = dy_ent / (dist_ent + 1e-6)
 
         rays = []
         if self.vel.length() > 0.01:
@@ -271,12 +398,12 @@ class Agente:
             rays.append(dist / ALCANCE_RAY)
 
         inputs = [
-            dx_alvo / LARGURA,
-            dy_alvo / ALTURA,
+            dir_alvo_x,
+            dir_alvo_y,
             dist_alvo / DIAGONAL,
             1.0 if self.carregando else 0.0,
-            dx_ent / LARGURA,
-            dy_ent / ALTURA,
+            dir_ent_x,
+            dir_ent_y,
             self.vel.length(),
             min(self.tempo_vivo / self.ambiente.config.duracao_geracao, 1.0),
         ] + rays
@@ -335,12 +462,14 @@ class Agente:
                 alinhamento = self.vel.normalize().dot(direcao.normalize())
                 self.fitness += alinhamento * cfg.peso_alinhamento
 
-        if self.melhor_dist_alvo is None:
+        progresso_delta = dist_antes - dist_depois
+        self.fitness += progresso_delta * cfg.peso_progresso
+
+        if self.melhor_dist_alvo is None or dist_depois < self.melhor_dist_alvo:
             self.melhor_dist_alvo = dist_depois
-        if dist_depois < self.melhor_dist_alvo:
-            ganho = self.melhor_dist_alvo - dist_depois
-            self.fitness += ganho * cfg.peso_progresso
-            self.melhor_dist_alvo = dist_depois
+
+        if cfg.peso_gradiente_inverso > 0:
+            self.fitness += cfg.peso_gradiente_inverso / (dist_depois + 1.0)
 
         if self.vel.length() < 0.05:
             self.passos_parado += 1

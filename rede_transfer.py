@@ -1,3 +1,16 @@
+"""
+Rede neural feedforward para controle de agente.
+
+Decisoes de arquitetura (apos diagnostico):
+- 2 camadas escondidas com tanh (estavel para neuroevolucao)
+- SAIDA LINEAR (sem tanh) - permite qualquer direcao/magnitude
+- Inicializacao Xavier (ganho 1.0) - evita saturar tanh no inicio
+- Atenuacao moderada dos pesos para inputs de raycast (0.3) -
+  raycasts ficam irrelevantes na fase 1 (sem obstaculos),
+  mas precisam estar disponiveis para fases 3+
+- Crossover por NEURONIO (coluna) - preserva funcionalidades aprendidas
+- Clip de pesos para evitar explosao apos varias geracoes de mutacao
+"""
 import os
 import numpy as np
 
@@ -6,21 +19,23 @@ HIDDEN_SIZE_1 = 32
 HIDDEN_SIZE_2 = 16
 OUTPUT_SIZE = 2
 
-
-def _relu(x):
-    return np.maximum(0.0, x)
+WEIGHT_CLIP = 4.0
 
 
 class RedeNeural:
-    def __init__(self, input_size=INPUT_SIZE, hidden_1=HIDDEN_SIZE_1, hidden_2=HIDDEN_SIZE_2, output_size=OUTPUT_SIZE):
+    def __init__(self, input_size=INPUT_SIZE, hidden_1=HIDDEN_SIZE_1,
+                 hidden_2=HIDDEN_SIZE_2, output_size=OUTPUT_SIZE):
         self.input_size = input_size
         self.hidden_1 = hidden_1
         self.hidden_2 = hidden_2
         self.output_size = output_size
 
-        self.w1 = np.random.randn(input_size, hidden_1) * np.sqrt(2.0 / input_size)
-        self.w2 = np.random.randn(hidden_1, hidden_2) * np.sqrt(2.0 / hidden_1)
+        self.w1 = np.random.randn(input_size, hidden_1) * np.sqrt(1.0 / input_size)
+        self.w2 = np.random.randn(hidden_1, hidden_2) * np.sqrt(1.0 / hidden_1)
         self.w3 = np.random.randn(hidden_2, output_size) * np.sqrt(1.0 / hidden_2)
+
+        if input_size > 8:
+            self.w1[8:, :] *= 0.3
 
         self.b1 = np.zeros(hidden_1)
         self.b2 = np.zeros(hidden_2)
@@ -28,9 +43,9 @@ class RedeNeural:
 
     def forward(self, x):
         x = np.asarray(x, dtype=np.float32)
-        h1 = _relu(x @ self.w1 + self.b1)
-        h2 = _relu(h1 @ self.w2 + self.b2)
-        return np.tanh(h2 @ self.w3 + self.b3)
+        h1 = np.tanh(x @ self.w1 + self.b1)
+        h2 = np.tanh(h1 @ self.w2 + self.b2)
+        return h2 @ self.w3 + self.b3
 
     def copy(self):
         nova = RedeNeural(self.input_size, self.hidden_1, self.hidden_2, self.output_size)
@@ -43,6 +58,8 @@ class RedeNeural:
         return nova
 
     def crossover(self, outra):
+        """Crossover por neuronio: cada coluna (neuronio inteiro) vem de um pai.
+        O bias do neuronio acompanha sua coluna."""
         filho = self.copy()
         for w_attr, b_attr in [("w1", "b1"), ("w2", "b2"), ("w3", "b3")]:
             wa = getattr(self, w_attr)
@@ -62,6 +79,7 @@ class RedeNeural:
             mask = np.random.rand(*m.shape) < rate
             ruido = np.random.randn(*m.shape) * strength
             m[mask] += ruido[mask]
+            np.clip(m, -WEIGHT_CLIP, WEIGHT_CLIP, out=m)
 
     def salvar(self, caminho):
         np.savez(
