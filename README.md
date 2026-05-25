@@ -124,7 +124,7 @@ A cada peso, com probabilidade `taxa_mutacao`, é somado ruído gaussiano de des
 ### 4.8. Logging e checkpoint
 - Métricas (fitness, taxa de entrega, colisões, tempo) salvas em `runs/<fase>_<timestamp>/metricas.csv`
 - Melhor rede da geração serializada em `melhor_rede.npz`
-- Ao final, [gerar_graficos.py](gerar_graficos.py) produz `resultados.png` (grid 3×3 com curvas EMA estilo YOLO)
+- Ao final, [gerar_graficos.py](gerar_graficos.py) produz `resultados.png` (grid 3×3 com curvas EMA)
 
 ---
 
