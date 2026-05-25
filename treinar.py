@@ -60,7 +60,18 @@ def _avaliar_em_cenarios(agentes, ambiente: Ambiente, cfg: CenarioConfig, dt: fl
     return media
 
 
-def treinar(cfg: CenarioConfig, modo: str = "headless"):
+def treinar(cfg: CenarioConfig, modo: str = "headless", logger: Optional[Logger] = None):
+    """
+    Treina rede neural usando neuroevolução
+    
+    Args:
+        cfg: Configuração da fase
+        modo: 'headless' ou 'visual'
+        logger: Logger para registrar métricas (default: cria Logger local)
+        
+    Returns:
+        str: Caminho do diretório de run
+    """
     assert modo in ("headless", "visual")
     rng = _setup_rng(cfg.seed)
 
@@ -69,7 +80,10 @@ def treinar(cfg: CenarioConfig, modo: str = "headless"):
     ambiente = Ambiente(cfg, rng=rng)
     agentes = criar_populacao(cfg, ambiente, rede_base, input_size=_input_size())
 
-    logger = Logger(cfg.nome)
+    # Usar logger fornecido ou criar novo
+    if logger is None:
+        logger = Logger(cfg.nome)
+    
     logger.salvar_config(cfg)
 
     melhor_fit_global = -float("inf")

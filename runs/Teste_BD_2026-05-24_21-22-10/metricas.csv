@@ -1,0 +1,2 @@
+geracao,fit_medio,fit_melhor,fit_pior,fit_std,coletas,entregas,colisoes,mortos,taxa_coleta,taxa_entrega,melhor_tempo,tempo_medio_entrega,distancia_media_entrega,taxa_mutacao_atual,forca_mutacao_atual,tempo_real_geracao_seg
+1,1216.4931308966372,3411.673672675366,-27.83093297958294,1266.4948021257808,0,0,0,0,0.0,0.0,0.0,0.0,0.0,0.14775,0.24625,0.3389749526977539
