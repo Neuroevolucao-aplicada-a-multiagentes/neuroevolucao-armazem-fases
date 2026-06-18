@@ -3,7 +3,7 @@
 > Trabalho de Conclusão de Curso — Ciência da Computação
 > Centro Universitário do Instituto Mauá de Tecnologia (IMT)
 
-**Autores:** Arthur Baptista Falzetta, Enrico Orlando Bernardi de Oliveira, Lucas Ribeiro Giaquinto, Matheus Nogami Weber, Murilo Sucupira Sacchi
+**Autores:** Arthur Baptista Falzetta, Enrico Orlando Bernardi de Oliveira, Lucas Ribeiro Giaquinto, Matheus Nogami Weber, Murilo Sucupira Sacchi 
 **Orientação:** Prof. Milkes Yone Alvarenga
 
 ---
