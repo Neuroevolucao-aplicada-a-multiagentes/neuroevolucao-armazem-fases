@@ -1,7 +1,9 @@
 import math
 import os
 import random
+import re
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
@@ -14,6 +16,7 @@ from simulador import (
 from rede_transfer import RedeNeural, carregar_rede_base, salvar_melhor
 from metricas import Logger
 from gerar_graficos import plotar_run
+from services import TrainingPersistenceService
 
 
 def _input_size() -> int:
@@ -25,6 +28,21 @@ def _setup_rng(seed: Optional[int]):
         random.seed(seed)
         np.random.seed(seed)
     return random.Random(seed) if seed is not None else random.Random()
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _derive_phase_code(cfg: CenarioConfig) -> str:
+    nome = cfg.nome.strip()
+    if not nome:
+        return "fase_desconhecida"
+
+    match = re.search(r"fase\s+([0-9]+(?:[._][0-9]+)?)", nome, flags=re.IGNORECASE)
+    if match is None:
+        return nome
+    return f"fase_{match.group(1).replace('.', '_')}"
 
 
 def _avaliar_em_cenarios(agentes, ambiente: Ambiente, cfg: CenarioConfig, dt: float = 1.0 / 60.0) -> dict:
@@ -74,23 +92,117 @@ def treinar(cfg: CenarioConfig, modo: str = "headless"):
 
     melhor_fit_global = -float("inf")
 
-    if modo == "visual":
-        _treinar_visual(cfg, ambiente, agentes, logger, melhor_fit_global)
-    else:
-        _treinar_headless(cfg, ambiente, agentes, logger, melhor_fit_global)
+    persistence_service = TrainingPersistenceService()
+    run_id: str | None = None
 
     try:
-        plotar_run(logger.dir)
-    except Exception as e:
-        print(f"[treinar] falhou gerando grafico: {e}")
+        experiment = persistence_service.start_experiment(
+            name=f"{cfg.nome} | {os.path.basename(logger.dir)}",
+            description="Treinamento neuroevolutivo",
+            environment="pygame",
+            status="running",
+            metadata={"modo": modo, "logger_dir": logger.dir},
+        )
 
-    logger.copiar_para(cfg.checkpoint_saida)
-    return logger.dir
+        run = persistence_service.start_run(
+            experiment_id=experiment["id"],
+            phase_code=_derive_phase_code(cfg),
+            run_label=os.path.basename(logger.dir),
+            seed=cfg.seed,
+            status="running",
+            started_at=_utc_now_iso(),
+            metadata={
+                "nome_cfg": cfg.nome,
+                "checkpoint_entrada": cfg.checkpoint_entrada,
+                "checkpoint_saida": cfg.checkpoint_saida,
+                "modo": modo,
+            },
+        )
+        run_id = str(run["id"])
+
+        persistence_service.save_run_config_snapshot(run_id=run_id, config=cfg)
+
+        if modo == "visual":
+            metricas_finais, concluiu_todas_geracoes, encerramento_manual = _treinar_visual(
+                cfg,
+                ambiente,
+                agentes,
+                logger,
+                melhor_fit_global,
+                persistence_service=persistence_service,
+                run_id=run_id,
+            )
+        else:
+            metricas_finais, concluiu_todas_geracoes, encerramento_manual = _treinar_headless(
+                cfg,
+                ambiente,
+                agentes,
+                logger,
+                melhor_fit_global,
+                persistence_service=persistence_service,
+                run_id=run_id,
+            )
+
+        try:
+            plotar_run(logger.dir)
+        except Exception as e:
+            print(f"[treinar] falhou gerando grafico: {e}")
+
+        logger.copiar_para(cfg.checkpoint_saida)
+
+        if concluiu_todas_geracoes:
+            persistence_service.complete_run(
+                run_id=run_id,
+                finished_at=_utc_now_iso(),
+                summary_metrics=metricas_finais,
+                metadata={"logger_dir": logger.dir, "modo": modo},
+            )
+        else:
+            persistence_service.fail_run(
+                run_id=run_id,
+                finished_at=_utc_now_iso(),
+                summary_metrics=metricas_finais,
+                metadata={
+                    "logger_dir": logger.dir,
+                    "modo": modo,
+                    "encerramento_manual": encerramento_manual,
+                },
+            )
+
+        return logger.dir
+    except Exception:
+        if run_id is not None:
+            try:
+                persistence_service.fail_run(
+                    run_id=run_id,
+                    finished_at=_utc_now_iso(),
+                    metadata={"logger_dir": logger.dir, "modo": modo},
+                )
+            except Exception:
+                pass
+        raise
 
 
-def _treinar_headless(cfg, ambiente, agentes, logger, melhor_fit_global):
+def _treinar_headless(
+    cfg,
+    ambiente,
+    agentes,
+    logger,
+    melhor_fit_global,
+    *,
+    persistence_service: TrainingPersistenceService,
+    run_id: str,
+):
     print(f"[treinar] modo headless | {cfg.num_geracoes} geracoes")
+    metricas_finais = None
     for geracao in range(1, cfg.num_geracoes + 1):
+        generation = persistence_service.start_generation(
+            run_id=run_id,
+            generation_number=geracao,
+            population_size=len(agentes),
+            started_at=_utc_now_iso(),
+        )
+
         for a in agentes:
             a.reset_estado()
         if cfg.usa_variacao_posicoes or cfg.usa_obstaculos and not cfg.obstaculos_fixos:
@@ -110,10 +222,27 @@ def _treinar_headless(cfg, ambiente, agentes, logger, melhor_fit_global):
         agentes, taxa, forca = nova_geracao(agentes, geracao, cfg, ambiente)
         logger.registrar(geracao, metricas, taxa, forca, dt_real)
 
+        persistence_service.finish_generation(
+            generation_id=generation["id"],
+            metrics=metricas,
+            finished_at=_utc_now_iso(),
+        )
+        metricas_finais = metricas
+
     print(f"[treinar] concluido. melhor fitness global: {melhor_fit_global:.1f}")
+    return metricas_finais, True, False
 
 
-def _treinar_visual(cfg, ambiente, agentes, logger, melhor_fit_global):
+def _treinar_visual(
+    cfg,
+    ambiente,
+    agentes,
+    logger,
+    melhor_fit_global,
+    *,
+    persistence_service: TrainingPersistenceService,
+    run_id: str,
+):
     pygame.init()
     screen = pygame.display.set_mode((LARGURA, ALTURA))
     pygame.display.set_caption(cfg.nome)
@@ -124,6 +253,15 @@ def _treinar_visual(cfg, ambiente, agentes, logger, melhor_fit_global):
     geracao = 1
     tempo = 0.0
     rodando = True
+    encerramento_manual = False
+    metricas_finais = None
+    generation = persistence_service.start_generation(
+        run_id=run_id,
+        generation_number=geracao,
+        population_size=len(agentes),
+        started_at=_utc_now_iso(),
+    )
+    generation_aberta = True
 
     while rodando and geracao <= cfg.num_geracoes:
         dt = clock.tick(60) / 1000
@@ -132,11 +270,13 @@ def _treinar_visual(cfg, ambiente, agentes, logger, melhor_fit_global):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 rodando = False
+                encerramento_manual = True
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     tempo = cfg.duracao_geracao + 1
                 if event.key == pygame.K_ESCAPE:
                     rodando = False
+                    encerramento_manual = True
 
         ambiente.atualizar(dt)
         for a in agentes:
@@ -163,6 +303,14 @@ def _treinar_visual(cfg, ambiente, agentes, logger, melhor_fit_global):
             agentes, taxa, forca = nova_geracao(agentes, geracao, cfg, ambiente)
             logger.registrar(geracao, metricas, taxa, forca, dt_real)
 
+            persistence_service.finish_generation(
+                generation_id=generation["id"],
+                metrics=metricas,
+                finished_at=_utc_now_iso(),
+            )
+            generation_aberta = False
+            metricas_finais = metricas
+
             if cfg.usa_variacao_posicoes or (cfg.usa_obstaculos and not cfg.obstaculos_fixos):
                 ambiente.resetar_cenario()
                 for a in agentes:
@@ -170,9 +318,29 @@ def _treinar_visual(cfg, ambiente, agentes, logger, melhor_fit_global):
 
             geracao += 1
             tempo = 0.0
+            if geracao <= cfg.num_geracoes and rodando:
+                generation = persistence_service.start_generation(
+                    run_id=run_id,
+                    generation_number=geracao,
+                    population_size=len(agentes),
+                    started_at=_utc_now_iso(),
+                )
+                generation_aberta = True
 
     pygame.quit()
+
+    if encerramento_manual and generation_aberta:
+        metricas_interrompidas = resumir_geracao(agentes, cfg)
+        metricas_finais = metricas_interrompidas
+        persistence_service.finish_generation(
+            generation_id=generation["id"],
+            metrics=metricas_interrompidas,
+            finished_at=_utc_now_iso(),
+        )
+
     print(f"[treinar] modo visual encerrado | melhor: {melhor_fit_global:.1f}")
+    concluiu_todas_geracoes = geracao > cfg.num_geracoes
+    return metricas_finais, concluiu_todas_geracoes, encerramento_manual
 
 
 def _desenhar_cena(screen, font, cfg, ambiente, agentes, geracao, tempo,
