@@ -4,7 +4,7 @@ import random
 import re
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import pygame
@@ -43,6 +43,56 @@ def _derive_phase_code(cfg: CenarioConfig) -> str:
     if match is None:
         return nome
     return f"fase_{match.group(1).replace('.', '_')}"
+
+
+def _genome_json(agente: Agente) -> dict[str, Any]:
+    brain = agente.brain
+    return {
+        "meta": {
+            "input_size": int(brain.input_size),
+            "hidden_1": int(brain.hidden_1),
+            "hidden_2": int(brain.hidden_2),
+            "output_size": int(brain.output_size),
+        },
+        "w1": brain.w1.tolist(),
+        "w2": brain.w2.tolist(),
+        "w3": brain.w3.tolist(),
+        "b1": brain.b1.tolist(),
+        "b2": brain.b2.tolist(),
+        "b3": brain.b3.tolist(),
+    }
+
+
+def _metadata_individual(agente: Agente) -> dict[str, Any]:
+    return {
+        "coletou": agente.coletou,
+        "entregou": agente.entregou,
+        "morto": agente.morto,
+        "colisoes": int(agente.colisoes),
+        "tempo_vivo": float(agente.tempo_vivo),
+        "tempo_entrega": (float(agente.tempo_entrega) if agente.tempo_entrega is not None else None),
+        "distancia_percorrida": float(agente.distancia_percorrida),
+        "carregando": agente.carregando,
+    }
+
+
+def _persistir_individuos_avaliados(
+    agentes: list[Agente],
+    *,
+    generation_id: str,
+    persistence_service: TrainingPersistenceService,
+) -> dict[int, str]:
+    ids_por_indice: dict[int, str] = {}
+    for idx, agente in enumerate(agentes, start=1):
+        individual = persistence_service.save_individual(
+            generation_id=generation_id,
+            individual_index=idx,
+            fitness=float(agente.fitness),
+            genome=_genome_json(agente),
+            metadata=_metadata_individual(agente),
+        )
+        ids_por_indice[idx] = str(individual["id"])
+    return ids_por_indice
 
 
 def _avaliar_em_cenarios(agentes, ambiente: Ambiente, cfg: CenarioConfig, dt: float = 1.0 / 60.0) -> dict:
@@ -214,10 +264,25 @@ def _treinar_headless(
         metricas = _avaliar_em_cenarios(agentes, ambiente, cfg)
         dt_real = time.time() - t0
 
+        individuals_ids = _persistir_individuos_avaliados(
+            agentes,
+            generation_id=str(generation["id"]),
+            persistence_service=persistence_service,
+        )
+
         melhor_idx = int(np.argmax([a.fitness for a in agentes]))
         if agentes[melhor_idx].fitness > melhor_fit_global:
             melhor_fit_global = agentes[melhor_idx].fitness
             agentes[melhor_idx].brain.salvar(logger.caminho_checkpoint())
+            persistence_service.save_checkpoint(
+                run_id=run_id,
+                generation_id=str(generation["id"]),
+                checkpoint_type="best",
+                storage_path=logger.caminho_checkpoint(),
+                fitness=float(agentes[melhor_idx].fitness),
+                individual_id=individuals_ids.get(melhor_idx + 1),
+                metrics=metricas,
+            )
 
         agentes, taxa, forca = nova_geracao(agentes, geracao, cfg, ambiente)
         logger.registrar(geracao, metricas, taxa, forca, dt_real)
@@ -291,10 +356,25 @@ def _treinar_visual(
             metricas = resumir_geracao(agentes, cfg)
             dt_real = time.time() - t0
 
+            individuals_ids = _persistir_individuos_avaliados(
+                agentes,
+                generation_id=str(generation["id"]),
+                persistence_service=persistence_service,
+            )
+
             melhor_idx = int(np.argmax([a.fitness for a in agentes]))
             if agentes[melhor_idx].fitness > melhor_fit_global:
                 melhor_fit_global = agentes[melhor_idx].fitness
                 agentes[melhor_idx].brain.salvar(logger.caminho_checkpoint())
+                persistence_service.save_checkpoint(
+                    run_id=run_id,
+                    generation_id=str(generation["id"]),
+                    checkpoint_type="best",
+                    storage_path=logger.caminho_checkpoint(),
+                    fitness=float(agentes[melhor_idx].fitness),
+                    individual_id=individuals_ids.get(melhor_idx + 1),
+                    metrics=metricas,
+                )
 
             historico_fitness.append(metricas["fit_medio"])
             historico_coletas.append(metricas["coletas"])
@@ -332,6 +412,11 @@ def _treinar_visual(
     if encerramento_manual and generation_aberta:
         metricas_interrompidas = resumir_geracao(agentes, cfg)
         metricas_finais = metricas_interrompidas
+        _persistir_individuos_avaliados(
+            agentes,
+            generation_id=str(generation["id"]),
+            persistence_service=persistence_service,
+        )
         persistence_service.finish_generation(
             generation_id=generation["id"],
             metrics=metricas_interrompidas,
