@@ -683,8 +683,14 @@ class RoboOperacional:
         dy_alvo = alvo.y - self.pos.y
         dist_alvo = self.pos.distance_to(alvo)
 
+        dir_alvo_x = dx_alvo / (dist_alvo + 1e-6)
+        dir_alvo_y = dy_alvo / (dist_alvo + 1e-6)
+
         dx_ent = self.entrega_pos.x - self.pos.x
         dy_ent = self.entrega_pos.y - self.pos.y
+        dist_ent = math.sqrt(dx_ent * dx_ent + dy_ent * dy_ent)
+        dir_ent_x = dx_ent / (dist_ent + 1e-6)
+        dir_ent_y = dy_ent / (dist_ent + 1e-6)
 
         if self.vel.length() > 0.01:
             heading = math.atan2(self.vel.y, self.vel.x)
@@ -697,15 +703,17 @@ class RoboOperacional:
             dist = self._raycast_com_robos(ang, outros)
             rays.append(dist / ALCANCE_RAY)
 
+        tempo_norm = min(self.tempo_ciclo_atual / self.ambiente.config.duracao_geracao, 1.0)
+
         return np.asarray([
-            dx_alvo / LARGURA,
-            dy_alvo / ALTURA,
+            dir_alvo_x,
+            dir_alvo_y,
             dist_alvo / DIAGONAL,
             1.0 if self.carregando else 0.0,
-            dx_ent / LARGURA,
-            dy_ent / ALTURA,
+            dir_ent_x,
+            dir_ent_y,
             self.vel.length(),
-            0.5,
+            tempo_norm,
         ] + rays, dtype=np.float32)
 
     def passo(self, dt: float, outros: List["RoboOperacional"]):
