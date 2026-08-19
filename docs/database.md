@@ -146,17 +146,20 @@ Os arrays NumPy são convertidos com `tolist()` para serialização JSON. Esse J
 
 ### Checkpoint
 
-Quando o melhor fitness da Generation supera o melhor fitness global da execução, a rede do melhor Agente é salva localmente em arquivo `.npz`. Em seguida, o banco recebe os metadados e a referência desse artefato:
+Cada Run mantém exatamente um registro de checkpoint com `checkpoint_type=best` para representar o arquivo local mutável `melhor_rede.npz`. Quando o melhor fitness da Generation supera o melhor fitness global da execução, a rede do melhor Agente sobrescreve esse arquivo. Na primeira melhora global, `TrainingPersistenceService.save_checkpoint()` cria o registro; nas melhorias seguintes, `TrainingPersistenceService.update_checkpoint()` usa `CheckpointRepository.update()` para atualizar o mesmo registro.
 
-- `checkpoint_type`: `best`;
-- `run_id` e `generation_id`;
+O checkpoint mantém o mesmo `id`, `run_id`, `checkpoint_type`, `storage_path` e `storage_bucket` durante toda a Run. A cada novo recorde, somente os campos que identificam e descrevem o conteúdo atual do arquivo são atualizados:
+
+- `generation_id`;
 - `individual_id` do melhor Agente, associado depois que os Individuals foram persistidos;
-- `storage_path` do arquivo local;
 - `fitness` real do melhor Individual;
-- `metrics` reais da Generation;
-- `storage_bucket`: permanece `NULL`, pois ainda não existe upload para o Supabase Storage.
+- `metrics` reais da Generation.
 
-A FK composta `checkpoint (generation_id, run_id) → generation (id, run_id)` garante que a Generation informada pertence à mesma Run do Checkpoint. O schema também limita `checkpoint_type` a `best`, `elite` ou `manual` e impede duplicidade do mesmo tipo em uma Generation; a integração atual usa apenas `best`.
+Esse modelo mantém o banco sincronizado com o conteúdo atual de `melhor_rede.npz` e evita uma nova inserção com o mesmo caminho, respeitando a constraint `UNIQUE(storage_path)`. `storage_bucket` permanece `NULL`, pois ainda não existe upload para o Supabase Storage.
+
+A FK composta `checkpoint (generation_id, run_id) → generation (id, run_id)` garante também durante os updates que a Generation informada pertence à mesma Run do Checkpoint. O schema limita `checkpoint_type` a `best`, `elite` ou `manual` e impede duplicidade do mesmo tipo em uma Generation; a integração atual usa apenas `best`.
+
+Filesystem e Supabase não participam de uma transação única. Se a sobrescrita local for concluída e a persistência no banco falhar, o arquivo poderá conter o novo melhor enquanto o registro ainda descreve o melhor anterior.
 
 ## Persistência local
 
@@ -171,6 +174,8 @@ O banco acrescenta rastreabilidade relacional, metadados consultáveis e genomes
 
 ## Validação end-to-end
 
+### Teste de uma geração
+
 O fluxo foi validado com um treinamento real reduzido da Fase 1, em modo headless, com uma Generation, oito agentes, um cenário e duração reduzida. O resultado observado foi:
 
 - Run finalizada com `status=completed`;
@@ -179,7 +184,18 @@ O fluxo foi validado com um treinamento real reduzido da Fase 1, em modo headles
 - um Checkpoint `best` associado à Run, à Generation e ao melhor Individual;
 - consistência entre `generation.best_fitness`, o fitness do melhor Individual e `checkpoint.fitness`.
 
-Nenhum identificador específico da execução de teste é necessário para reproduzir ou documentar essa validação.
+### Teste de dez gerações
+
+O comportamento multi-geração foi validado com um treinamento real da Fase 1, em modo headless, com dez gerações, oito agentes e um cenário. O resultado observado foi:
+
+- Run finalizada com `status=completed`;
+- dez Generations persistidas e finalizadas;
+- novos recordes globais nas gerações 1, 4, 6 e 10;
+- criação do checkpoint na geração 1 e updates do mesmo registro nas gerações 4, 6 e 10;
+- exatamente um Checkpoint `best` ao final, apontando para a geração 10;
+- consistência final com `checkpoint.fitness`, `generation.best_fitness` e `individual.fitness` iguais a `10207.3956071146`.
+
+Nenhum identificador específico das execuções de teste é necessário para reproduzir ou documentar essas validações.
 
 ## IndividualEvaluation
 
