@@ -95,6 +95,43 @@ def _persistir_individuos_avaliados(
     return ids_por_indice
 
 
+def _persistir_checkpoint_best(
+    agente: Agente,
+    *,
+    checkpoint_id: str | None,
+    logger: Logger,
+    persistence_service: TrainingPersistenceService,
+    run_id: str,
+    generation_id: str,
+    individual_id: str | None,
+    metrics: dict[str, Any],
+) -> str:
+    agente.brain.salvar(logger.caminho_checkpoint())
+
+    if checkpoint_id is None:
+        checkpoint = persistence_service.save_checkpoint(
+            run_id=run_id,
+            generation_id=generation_id,
+            checkpoint_type="best",
+            storage_path=logger.caminho_checkpoint(),
+            fitness=float(agente.fitness),
+            individual_id=individual_id,
+            metrics=metrics,
+        )
+    else:
+        checkpoint = persistence_service.update_checkpoint(
+            checkpoint_id,
+            generation_id=generation_id,
+            individual_id=individual_id,
+            fitness=float(agente.fitness),
+            metrics=metrics,
+        )
+
+    if checkpoint is None:
+        raise RuntimeError("Checkpoint best could not be persisted.")
+    return str(checkpoint["id"])
+
+
 def _avaliar_em_cenarios(agentes, ambiente: Ambiente, cfg: CenarioConfig, dt: float = 1.0 / 60.0) -> dict:
     if cfg.cenarios_por_geracao <= 1:
         return rodar_geracao(agentes, ambiente, cfg, dt_fixo=dt)
@@ -245,6 +282,7 @@ def _treinar_headless(
 ):
     print(f"[treinar] modo headless | {cfg.num_geracoes} geracoes")
     metricas_finais = None
+    best_checkpoint_id: str | None = None
     for geracao in range(1, cfg.num_geracoes + 1):
         generation = persistence_service.start_generation(
             run_id=run_id,
@@ -273,13 +311,13 @@ def _treinar_headless(
         melhor_idx = int(np.argmax([a.fitness for a in agentes]))
         if agentes[melhor_idx].fitness > melhor_fit_global:
             melhor_fit_global = agentes[melhor_idx].fitness
-            agentes[melhor_idx].brain.salvar(logger.caminho_checkpoint())
-            persistence_service.save_checkpoint(
+            best_checkpoint_id = _persistir_checkpoint_best(
+                agentes[melhor_idx],
+                checkpoint_id=best_checkpoint_id,
+                logger=logger,
+                persistence_service=persistence_service,
                 run_id=run_id,
                 generation_id=str(generation["id"]),
-                checkpoint_type="best",
-                storage_path=logger.caminho_checkpoint(),
-                fitness=float(agentes[melhor_idx].fitness),
                 individual_id=individuals_ids.get(melhor_idx + 1),
                 metrics=metricas,
             )
@@ -320,6 +358,7 @@ def _treinar_visual(
     rodando = True
     encerramento_manual = False
     metricas_finais = None
+    best_checkpoint_id: str | None = None
     generation = persistence_service.start_generation(
         run_id=run_id,
         generation_number=geracao,
@@ -365,13 +404,13 @@ def _treinar_visual(
             melhor_idx = int(np.argmax([a.fitness for a in agentes]))
             if agentes[melhor_idx].fitness > melhor_fit_global:
                 melhor_fit_global = agentes[melhor_idx].fitness
-                agentes[melhor_idx].brain.salvar(logger.caminho_checkpoint())
-                persistence_service.save_checkpoint(
+                best_checkpoint_id = _persistir_checkpoint_best(
+                    agentes[melhor_idx],
+                    checkpoint_id=best_checkpoint_id,
+                    logger=logger,
+                    persistence_service=persistence_service,
                     run_id=run_id,
                     generation_id=str(generation["id"]),
-                    checkpoint_type="best",
-                    storage_path=logger.caminho_checkpoint(),
-                    fitness=float(agentes[melhor_idx].fitness),
                     individual_id=individuals_ids.get(melhor_idx + 1),
                     metrics=metricas,
                 )

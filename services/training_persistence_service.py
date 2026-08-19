@@ -192,6 +192,23 @@ class TrainingPersistenceService:
             metrics=metrics,
         )
 
+    def update_checkpoint(
+        self,
+        checkpoint_id: UUID | str,
+        *,
+        generation_id: UUID | str,
+        individual_id: UUID | str | None,
+        fitness: Numeric | None,
+        metrics: Mapping[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        return self.checkpoint_repository.update(
+            checkpoint_id,
+            generation_id=generation_id,
+            individual_id=individual_id,
+            fitness=fitness,
+            metrics=metrics,
+        )
+
     def complete_run(
         self,
         *,
