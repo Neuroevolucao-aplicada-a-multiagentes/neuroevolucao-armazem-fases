@@ -88,7 +88,7 @@ A rede mantém o **mesmo formato** (16 → 32 → 16 → 2) em todas as fases �
 
 ## 4. Os passos do treinamento
 
-O loop principal está em [treinar.py](treinar.py). Para cada geração:
+O loop principal está em [src/treinar.py](src/treinar.py). Para cada geração:
 
 ### 4.1. Avaliação multi-cenário
 Cada agente da população executa `cenarios_por_geracao` simulações diferentes (mapas com posições/obstáculos sorteados). O fitness final é a média dos cenários — reduz overfit a um único mapa.
@@ -124,7 +124,7 @@ A cada peso, com probabilidade `taxa_mutacao`, é somado ruído gaussiano de des
 ### 4.8. Logging e checkpoint
 - Métricas (fitness, taxa de entrega, colisões, tempo) salvas em `runs/<fase>_<timestamp>/metricas.csv`
 - Melhor rede da geração serializada em `melhor_rede.npz`
-- Ao final, [gerar_graficos.py](gerar_graficos.py) produz `resultados.png` (grid 3×3 com curvas EMA)
+- Ao final, [src/gerar_graficos.py](src/gerar_graficos.py) produz `resultados.png` (grid 3×3 com curvas EMA)
 
 ---
 
@@ -139,42 +139,42 @@ Pacotes principais: `numpy`, `pygame`, `pandas`, `matplotlib`.
 
 ### Treinamento (modo headless — rápido, sem janela)
 ```powershell
-python treinar.py 1
-python treinar.py 2
-python treinar.py 3
-python treinar.py 4
-python treinar.py 4_1
-python treinar.py 4_2
-python treinar.py 5
+python src/treinar.py 1
+python src/treinar.py 2
+python src/treinar.py 3
+python src/treinar.py 4
+python src/treinar.py 4_1
+python src/treinar.py 4_2
+python src/treinar.py 5
 ```
 
 Cada fase carrega automaticamente o checkpoint da anterior. Overrides:
 ```powershell
-python treinar.py 1 --geracoes 200 --seed 7
+python src/treinar.py 1 --geracoes 200 --seed 7
 ```
 
 ### Treinamento visual (com janela pygame)
 ```powershell
-python main_fase1_transfer.py
-python main_fase2_transfer.py
+python src/main_fase1_transfer.py
+python src/main_fase2_transfer.py
 ...
-python main_fase5_transfer.py
+python src/main_fase5_transfer.py
 ```
 
 Atalhos: `SPACE` pula geração, `ESC` encerra.
 
 ### Operar uma rede já treinada
 ```powershell
-python operar.py 5
+python src/operar.py 5
 ```
 
 Carrega `melhor_rede_fase5.npz` e roda o ambiente em modo demo (sem treinar).
 
 ### Gerar gráficos pós-treino
 ```powershell
-python gerar_graficos.py --ultima                  # ultima run
-python gerar_graficos.py runs/Fase_3_..._...       # run especifica
-python gerar_graficos.py --comparar runs/          # comparativo
+python src/gerar_graficos.py --ultima                  # ultima run
+python src/gerar_graficos.py runs/Fase_3_..._...       # run especifica
+python src/gerar_graficos.py --comparar runs/          # comparativo
 ```
 
 ---
@@ -183,23 +183,32 @@ python gerar_graficos.py --comparar runs/          # comparativo
 
 ```
 tcc_fases_transfer/
-├── rede_transfer.py          # rede neural (MLP 16-32-16-2)
-├── simulador.py              # Ambiente, Agente, raycasts, geradores de obstaculo
-├── treinar.py                # loop GA (headless e visual)
-├── metricas.py               # Logger -> CSV
-├── gerar_graficos.py         # pandas + matplotlib -> PNG
-├── operar.py                 # carrega .npz e executa visualmente
+├── src/                      # todo o codigo Python
+│   ├── rede_transfer.py          # rede neural (MLP 16-32-16-2)
+│   ├── simulador.py              # Ambiente, Agente, raycasts, geradores de obstaculo
+│   ├── treinar.py                # loop GA (headless e visual)
+│   ├── metricas.py               # Logger -> CSV
+│   ├── gerar_graficos.py         # pandas + matplotlib -> PNG
+│   ├── operar.py                 # carrega .npz e executa visualmente
+│   │
+│   ├── config_fase1.py ... config_fase5.py   # parametros por fase
+│   ├── main_fase1_transfer.py ...            # entrypoints visuais (compat)
+│   │
+│   ├── gerar_figura_arquitetura.py    # gera arquitetura + fluxo do sistema
+│   ├── teste_cenarios_fase3.py        # debug visual: 6 cenarios da fase 3
+│   ├── teste_curriculo_fases.py       # debug visual: 4 fases lado a lado
+│   ├── experimento_escalabilidade.py  # mede throughput vs N robos
+│   │
+│   ├── database/                 # conexao Supabase
+│   ├── repositories/             # acesso as tabelas do schema core
+│   └── services/                 # orquestra a persistencia do treino
 │
-├── config_fase1.py ... config_fase5.py   # parametros por fase
-├── main_fase1_transfer.py ...            # entrypoints visuais (compat)
-│
-├── gerar_figura_arquitetura.py    # gera arquitetura + fluxo do sistema
-├── teste_cenarios_fase3.py        # debug visual: 6 cenarios da fase 3
-├── teste_curriculo_fases.py       # debug visual: 4 fases lado a lado
-├── experimento_escalabilidade.py  # mede throughput vs N robos
-│
+├── tests/                    # testes automatizados (pytest)
+├── supabase/migrations/      # SQL das migrations (aplicar em ordem)
+├── docs/                     # documentacao da persistencia
 ├── figuras/                  # arquitetura, fluxo, curriculo
 ├── runs/                     # output (csv + checkpoint + grafico) por execucao
+├── .env.example              # modelo das credenciais (copiar para .env)
 └── melhor_rede_fase*.npz     # checkpoints encadeados entre fases
 ```
 
