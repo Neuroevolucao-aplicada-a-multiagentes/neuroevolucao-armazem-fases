@@ -19,6 +19,10 @@ from gerar_graficos import plotar_run
 from services import TrainingPersistenceService
 
 
+# geracoes minimas para uma run poder sobrescrever o checkpoint da fase
+MIN_GERACOES_PARA_SALVAR = 20
+
+
 def _input_size() -> int:
     return 8 + NUM_RAYS
 
@@ -165,8 +169,14 @@ def _avaliar_em_cenarios(agentes, ambiente: Ambiente, cfg: CenarioConfig, dt: fl
     return media
 
 
-def treinar(cfg: CenarioConfig, modo: str = "headless"):
+def treinar(cfg: CenarioConfig, modo: str = "headless", salvar_checkpoint=None):
     assert modo in ("headless", "visual")
+
+    # Uma run curta (teste rapido) nao pode sobrescrever o checkpoint da fase:
+    # ele nao esta versionado e representa dias de treino. Com None, decide pelo
+    # numero de geracoes; --salvar / --nao-salvar forcam explicitamente.
+    if salvar_checkpoint is None:
+        salvar_checkpoint = cfg.num_geracoes >= MIN_GERACOES_PARA_SALVAR
     rng = _setup_rng(cfg.seed)
 
     rede_base = carregar_rede_base(cfg.checkpoint_entrada, input_size=_input_size())
@@ -235,7 +245,13 @@ def treinar(cfg: CenarioConfig, modo: str = "headless"):
         except Exception as e:
             print(f"[treinar] falhou gerando grafico: {e}")
 
-        logger.copiar_para(cfg.checkpoint_saida)
+        if salvar_checkpoint:
+            logger.copiar_para(cfg.checkpoint_saida)
+        else:
+            print(f"[treinar] checkpoint NAO copiado para {cfg.checkpoint_saida} "
+                  f"(run de {cfg.num_geracoes} geracoes, minimo {MIN_GERACOES_PARA_SALVAR}). "
+                  f"Use --salvar para forcar.")
+            print(f"[treinar] o resultado desta run esta em {logger.checkpoint_path}")
 
         if concluiu_todas_geracoes:
             persistence_service.complete_run(
@@ -575,6 +591,10 @@ if __name__ == "__main__":
     parser.add_argument("--visual", action="store_true", help="Modo visual com janela pygame")
     parser.add_argument("--geracoes", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--salvar", dest="salvar", action="store_true", default=None,
+                        help="Forca sobrescrever o checkpoint da fase")
+    parser.add_argument("--nao-salvar", dest="salvar", action="store_false",
+                        help="Nunca sobrescreve o checkpoint da fase")
     args = parser.parse_args()
 
     import importlib
@@ -585,4 +605,5 @@ if __name__ == "__main__":
     if args.seed is not None:
         cfg.seed = args.seed
 
-    treinar(cfg, modo="visual" if args.visual else "headless")
+    treinar(cfg, modo="visual" if args.visual else "headless",
+            salvar_checkpoint=args.salvar)

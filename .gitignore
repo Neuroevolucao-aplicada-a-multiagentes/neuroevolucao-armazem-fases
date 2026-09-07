@@ -24,6 +24,10 @@ Thumbs.db
 
 # Pesos/modelos salvos (reproduziveis via treino)
 *.npz
+# excecao: os checkpoints das fases sao o resultado do trabalho,
+# pesam ~10 KB e nao sao reproduziveis sem repetir dias de treino
+!melhor_rede_fase*.npz
+*.npz.bak
 
 # Resultados individuais de execucao (CSVs + PNGs gerados por treino)
 runs/

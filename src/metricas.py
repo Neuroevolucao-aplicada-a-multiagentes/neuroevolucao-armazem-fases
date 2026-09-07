@@ -76,6 +76,13 @@ class Logger:
         return self.checkpoint_path
 
     def copiar_para(self, destino: str):
-        if os.path.exists(self.checkpoint_path):
-            shutil.copyfile(self.checkpoint_path, destino)
-            print(f"[logger] checkpoint copiado para {destino}")
+        if not os.path.exists(self.checkpoint_path):
+            return
+        # o checkpoint da fase nao esta versionado: sem esta copia, sobrescrever
+        # por engano significa perder dias de treino
+        if os.path.exists(destino):
+            backup = destino + ".bak"
+            shutil.copyfile(destino, backup)
+            print(f"[logger] checkpoint anterior preservado em {backup}")
+        shutil.copyfile(self.checkpoint_path, destino)
+        print(f"[logger] checkpoint copiado para {destino}")
