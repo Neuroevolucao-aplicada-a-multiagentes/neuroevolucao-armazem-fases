@@ -85,14 +85,30 @@ def _persistir_individuos_avaliados(
     *,
     generation_id: str,
     persistence_service: TrainingPersistenceService,
+    n_elite: int = 0,
 ) -> dict[int, str]:
+    # O ranking e calculado SEM reordenar a lista: individual_index precisa
+    # continuar sendo a posicao original, que o chamador usa para localizar o
+    # melhor individuo ao gravar o checkpoint.
+    ordem = sorted(range(len(agentes)), key=lambda i: agentes[i].fitness, reverse=True)
+    rank_por_indice = {i: pos + 1 for pos, i in enumerate(ordem)}
+    elites = set(ordem[:n_elite])
+
     ids_por_indice: dict[int, str] = {}
     for idx, agente in enumerate(agentes, start=1):
+        i0 = idx - 1
+        eh_elite = i0 in elites
         individual = persistence_service.save_individual(
             generation_id=generation_id,
             individual_index=idx,
             fitness=float(agente.fitness),
-            genome=_genome_json(agente),
+            rank=rank_por_indice[i0],
+            is_elite=eh_elite,
+            # O genoma sao 1106 floats (~22 KB em JSON). Gravar so o da elite
+            # corta ~87% do trafego por geracao sem perder nada: o melhor
+            # individuo esta sempre na elite, e e dele que o checkpoint - e o
+            # Godot, por consequencia - le os pesos.
+            genome=_genome_json(agente) if eh_elite else None,
             metadata=_metadata_individual(agente),
         )
         ids_por_indice[idx] = str(individual["id"])
@@ -322,6 +338,7 @@ def _treinar_headless(
             agentes,
             generation_id=str(generation["id"]),
             persistence_service=persistence_service,
+            n_elite=cfg.elite,
         )
 
         melhor_idx = int(np.argmax([a.fitness for a in agentes]))
@@ -415,6 +432,7 @@ def _treinar_visual(
                 agentes,
                 generation_id=str(generation["id"]),
                 persistence_service=persistence_service,
+                n_elite=cfg.elite,
             )
 
             melhor_idx = int(np.argmax([a.fitness for a in agentes]))
@@ -471,6 +489,7 @@ def _treinar_visual(
             agentes,
             generation_id=str(generation["id"]),
             persistence_service=persistence_service,
+            n_elite=cfg.elite,
         )
         persistence_service.finish_generation(
             generation_id=generation["id"],
