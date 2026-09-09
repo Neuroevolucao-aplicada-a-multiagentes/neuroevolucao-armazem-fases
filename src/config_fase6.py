@@ -54,8 +54,13 @@ CONFIG = CenarioConfig(
     num_geracoes=250,
     elite=4,
 
-    taxa_mutacao=0.25,
-    forca_mutacao=0.30,
+    # Refinar uma rede ja boa exige menos perturbacao que explorar do zero.
+    # Com 0.25/0.30, 26 dos 30 individuos por geracao eram produto de
+    # crossover + mutacao, e quando a selecao nao consegue distinguir os bons
+    # isso vira passeio aleatorio ladeira abaixo - foi o que a sondagem de
+    # 25 geracoes mostrou, com a entrega caindo de 70,6% para 30,8%.
+    taxa_mutacao=0.12,
+    forca_mutacao=0.15,
 
     usa_obstaculos=True,
     usa_layout_corredores=True,
@@ -71,7 +76,14 @@ CONFIG = CenarioConfig(
 
     peso_progresso=2.0,
     peso_alinhamento=0.01,
-    bonus_proximidade_max=0.0,
+    # Zerar este termo foi o erro da primeira tentativa: era ele que dava
+    # gradiente para quem NAO entregou. Sem ele, num cenario onde so ~30%
+    # completam, os outros 70% pontuavam igual e a selecao virava ruido.
+    # Restaurado a 800 (era 1500) e agora medido pela MELHOR aproximacao
+    # alcancada, nao pela posicao final - o que preserva o gradiente sem
+    # premiar terminar encostado na parede perto do alvo.
+    bonus_proximidade_max=800.0,
+    proximidade_por_melhor_aproximacao=True,
     penalidade_colisao=300.0,
     penalidade_colisao_continua=60.0,
     max_colisoes_morte=12,

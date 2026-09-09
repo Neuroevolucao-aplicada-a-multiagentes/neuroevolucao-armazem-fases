@@ -63,6 +63,13 @@ class CenarioConfig:
     bonus_proximidade_max: float = 1500.0
     pool_selecao_fracao: float = 0.5
 
+    # Com False, o bonus de proximidade usa a posicao FINAL do agente. Isso
+    # premia quem termina encostado na parede mais proxima do alvo, que e o
+    # modo de falha em topologia de corredor. Com True, usa a melhor
+    # aproximacao ja alcancada na etapa atual: mantem o gradiente para quem
+    # nao entregou sem recompensar ficar parado no fim.
+    proximidade_por_melhor_aproximacao: bool = False
+
     num_obstaculos: int = 3
     obstaculos_no_caminho: bool = False
     offset_obstaculo_perpendicular: int = 40
@@ -718,8 +725,14 @@ def _aplicar_bonus_proximidade(agentes: List[Agente], ambiente: Ambiente, cfg: C
     for a in agentes:
         if a.entregou:
             continue
-        alvo = a.alvo_atual()
-        dist = a.pos.distance_to(alvo)
+        if cfg.proximidade_por_melhor_aproximacao:
+            # melhor_dist_alvo e zerado a cada coleta e a cada entrega, entao
+            # sempre se refere a etapa atual da tarefa.
+            dist = a.melhor_dist_alvo
+            if dist is None:
+                continue
+        else:
+            dist = a.pos.distance_to(a.alvo_atual())
         if dist >= raio_efetivo:
             continue
         prox = 1.0 - dist / raio_efetivo
