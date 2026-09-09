@@ -606,7 +606,7 @@ def _desenhar_cena(screen, font, cfg, ambiente, agentes, geracao, tempo,
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("fase", choices=["1", "2", "3", "4", "4_1", "4_2", "5"])
+    parser.add_argument("fase", choices=["1", "2", "3", "4", "4_1", "4_2", "5", "6"])
     parser.add_argument("--visual", action="store_true", help="Modo visual com janela pygame")
     parser.add_argument("--geracoes", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)

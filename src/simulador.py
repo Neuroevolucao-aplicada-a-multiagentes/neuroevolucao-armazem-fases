@@ -68,6 +68,22 @@ class CenarioConfig:
     offset_obstaculo_perpendicular: int = 40
     num_obstaculos_extra_livres: int = 0
 
+    # Penalidade aplicada a cada segundo em que o agente permanece colidindo,
+    # somada a penalidade_colisao (que e por evento). Sem ela a aptidao nao
+    # distingue quem bate e segue de quem bate e fica preso, e a rede nunca
+    # desenvolve comportamento de se desvencilhar.
+    penalidade_colisao_continua: float = 0.0
+
+    # Layout em corredores: fileiras paralelas ao eixo x, separadas por
+    # corredores e cortadas por corredores transversais. O gerador de
+    # retangulos isolados nao produz essa topologia, que e a do armazem real.
+    usa_layout_corredores: bool = False
+    num_fileiras: int = 2
+    espessura_fileira: int = 60
+    largura_corredor_min: int = 110
+    num_transversais: int = 2
+    largura_transversal: int = 120
+
 
 def _vec(x, y) -> pygame.Vector2:
     return pygame.Vector2(float(x), float(y))
@@ -190,6 +206,80 @@ def gerar_obstaculos_no_caminho(segmentos: List[Tuple[pygame.Vector2, pygame.Vec
     return obstaculos
 
 
+def gerar_layout_corredores(rng: random.Random,
+                            num_fileiras: int = 2,
+                            espessura_fileira: int = 60,
+                            largura_corredor_min: int = 110,
+                            num_transversais: int = 2,
+                            largura_transversal: int = 120,
+                            margem: int = 60) -> List[pygame.Rect]:
+    """Fileiras paralelas ao eixo x, cortadas por corredores transversais.
+
+    Reproduz a topologia de um armazem: paredes longas com aberturas, em vez
+    dos retangulos isolados em espaco aberto que gerar_obstaculos_aleatorios
+    produz. E uma topologia diferente, nao apenas uma densidade diferente:
+    com paredes longas, alcancar um alvo do outro lado exige afastar-se dele
+    temporariamente para chegar a abertura.
+
+    O numero de fileiras e reduzido automaticamente se os corredores nao
+    couberem com a largura minima exigida.
+    """
+    altura_util = ALTURA - 2 * margem
+
+    n = max(1, num_fileiras)
+    while n > 1 and (altura_util - n * espessura_fileira) / (n + 1) < largura_corredor_min:
+        n -= 1
+    corredor = (altura_util - n * espessura_fileira) / (n + 1)
+
+    x0, x1 = float(margem), float(LARGURA - margem)
+
+    cortes: List[Tuple[float, float]] = []
+    if num_transversais > 0:
+        passo = (x1 - x0) / (num_transversais + 1)
+        for i in range(1, num_transversais + 1):
+            centro = x0 + passo * i + rng.uniform(-passo * 0.15, passo * 0.15)
+            cortes.append((centro - largura_transversal / 2.0,
+                           centro + largura_transversal / 2.0))
+        cortes.sort()
+
+    rects: List[pygame.Rect] = []
+    for f in range(n):
+        y = margem + corredor * (f + 1) + espessura_fileira * f
+        inicio = x0
+        for c0, c1 in cortes:
+            if c0 - inicio > 40:
+                rects.append(pygame.Rect(int(inicio), int(y),
+                                         int(c0 - inicio), int(espessura_fileira)))
+            inicio = max(inicio, c1)
+        if x1 - inicio > 40:
+            rects.append(pygame.Rect(int(inicio), int(y),
+                                     int(x1 - inicio), int(espessura_fileira)))
+
+    return rects
+
+
+def sortear_ponto_livre(rng: random.Random, obstaculos: List[pygame.Rect],
+                        margem_obstaculo: int = 55,
+                        margem_borda: int = 50,
+                        tentativas: int = 300) -> Optional[pygame.Vector2]:
+    """Sorteia um ponto nos corredores, longe o bastante de qualquer fileira.
+
+    A margem padrao vem do contrato do ambiente: com raio de coleta 20, o
+    alvo precisa de folga para o agente chegar sem raspar no obstaculo.
+    """
+    for _ in range(tentativas):
+        p = _vec(rng.randint(margem_borda, LARGURA - margem_borda),
+                 rng.randint(margem_borda, ALTURA - margem_borda))
+        livre = True
+        for obs in obstaculos:
+            if obs.inflate(margem_obstaculo * 2, margem_obstaculo * 2).collidepoint(p.x, p.y):
+                livre = False
+                break
+        if livre:
+            return p
+    return None
+
+
 class RoboMovel:
     def __init__(self, p1: pygame.Vector2, p2: pygame.Vector2, velocidade: float = 80.0):
         self.p1 = pygame.Vector2(p1)
@@ -224,6 +314,10 @@ class Ambiente:
 
     def resetar_cenario(self):
         cfg = self.config
+
+        if cfg.usa_layout_corredores:
+            self._resetar_cenario_corredores()
+            return
 
         self.start_pos = _vec(*cfg.start_fixo)
         self.obstaculos = []
@@ -275,6 +369,47 @@ class Ambiente:
         for _ in range(cfg.num_robos_moveis):
             p1 = _vec(self.rng.randint(150, LARGURA - 150), self.rng.randint(100, ALTURA - 100))
             p2 = _vec(self.rng.randint(150, LARGURA - 150), self.rng.randint(100, ALTURA - 100))
+            self.robos_moveis.append(RoboMovel(p1, p2, velocidade=self.rng.uniform(40, 90)))
+
+    def _resetar_cenario_corredores(self):
+        """Gera as fileiras PRIMEIRO e so entao sorteia start, pacote e entrega
+        nos corredores livres. A ordem inversa colocaria alvos dentro das
+        estantes, que foi o bug de spawn ja diagnosticado no ambiente visual."""
+        cfg = self.config
+
+        self.obstaculos = gerar_layout_corredores(
+            self.rng,
+            num_fileiras=cfg.num_fileiras,
+            espessura_fileira=cfg.espessura_fileira,
+            largura_corredor_min=cfg.largura_corredor_min,
+            num_transversais=cfg.num_transversais,
+            largura_transversal=cfg.largura_transversal,
+        )
+
+        def sortear(distancia_minima_de=None, dist_min=0.0):
+            for _ in range(200):
+                p = sortear_ponto_livre(self.rng, self.obstaculos)
+                if p is None:
+                    continue
+                if distancia_minima_de is not None and p.distance_to(distancia_minima_de) < dist_min:
+                    continue
+                return p
+            return None
+
+        self.start_pos = sortear() or _vec(*cfg.start_fixo)
+        # Exige que o pacote fique longe do start e a entrega longe do pacote:
+        # e o que forca o agente a atravessar corredores em vez de resolver
+        # tudo dentro do mesmo trecho.
+        self.pacote_pos = sortear(self.start_pos, 280.0) or _vec(*cfg.pacote_fixo)
+        if cfg.objetivo_simples:
+            self.entrega_pos = self.pacote_pos
+        else:
+            self.entrega_pos = sortear(self.pacote_pos, 280.0) or _vec(*cfg.entrega_fixa)
+
+        self.robos_moveis = []
+        for _ in range(cfg.num_robos_moveis):
+            p1 = sortear() or _vec(LARGURA / 2, ALTURA / 2)
+            p2 = sortear() or _vec(LARGURA / 2, ALTURA / 2)
             self.robos_moveis.append(RoboMovel(p1, p2, velocidade=self.rng.uniform(40, 90)))
 
     def _gerar_posicoes_validas(self) -> Tuple[pygame.Vector2, pygame.Vector2]:
@@ -446,6 +581,10 @@ class Agente:
             self.distancia_percorrida += deslocamento.length()
             self.em_colisao = False
         else:
+            # Penalidade por TEMPO em contato, alem da penalidade por evento.
+            # Sem ela, ficar preso custa o mesmo que raspar e seguir, e a
+            # evolucao nao tem gradiente para aprender a se desvencilhar.
+            self.fitness -= cfg.penalidade_colisao_continua * dt
             if not self.em_colisao:
                 self.colisoes += 1
                 self.fitness -= cfg.penalidade_colisao
