@@ -71,7 +71,13 @@ CONFIG = CenarioConfig(
     largura_transversal=120,
 
     num_robos_moveis=3,
-    cenarios_por_geracao=3,
+    # Seis layouts FIXOS, os mesmos em todas as geracoes. Sorteando a cada
+    # geracao a aptidao fica nao estacionaria e a selecao persegue sorteio de
+    # cenario: medimos 18,8 pp de desvio na taxa de entrega entre geracoes
+    # vizinhas, o que afogava qualquer sinal de melhora. Seis em vez de tres
+    # tambem reduz o risco de sobreajuste a um layout especifico.
+    cenarios_por_geracao=6,
+    layouts_fixos=6,
     seed=42,
 
     peso_progresso=2.0,

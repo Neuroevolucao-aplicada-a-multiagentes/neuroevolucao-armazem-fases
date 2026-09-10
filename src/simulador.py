@@ -70,6 +70,12 @@ class CenarioConfig:
     # nao entregou sem recompensar ficar parado no fim.
     proximidade_por_melhor_aproximacao: bool = False
 
+    # Numero de layouts pre-gerados e reusados em TODAS as geracoes. Com 0,
+    # cada geracao sorteia layouts novos, o que torna a aptidao nao
+    # estacionaria. Deve ser igual a cenarios_por_geracao para que toda
+    # geracao seja avaliada exatamente no mesmo conjunto.
+    layouts_fixos: int = 0
+
     num_obstaculos: int = 3
     obstaculos_no_caminho: bool = False
     offset_obstaculo_perpendicular: int = 40
@@ -317,6 +323,8 @@ class Ambiente:
         self.pacote_pos = _vec(*config.pacote_fixo)
         self.entrega_pos = _vec(*config.entrega_fixa)
         self.start_pos = _vec(*config.start_fixo)
+        self._pool_layouts = None
+        self._idx_layout = 0
         self.resetar_cenario()
 
     def resetar_cenario(self):
@@ -378,14 +386,17 @@ class Ambiente:
             p2 = _vec(self.rng.randint(150, LARGURA - 150), self.rng.randint(100, ALTURA - 100))
             self.robos_moveis.append(RoboMovel(p1, p2, velocidade=self.rng.uniform(40, 90)))
 
-    def _resetar_cenario_corredores(self):
-        """Gera as fileiras PRIMEIRO e so entao sorteia start, pacote e entrega
-        nos corredores livres. A ordem inversa colocaria alvos dentro das
-        estantes, que foi o bug de spawn ja diagnosticado no ambiente visual."""
+    def _criar_layout_corredores(self, rng: random.Random) -> dict:
+        """Gera UM layout completo: fileiras, start, pacote, entrega e robos.
+
+        As fileiras vem PRIMEIRO e so entao os pontos sao sorteados nos
+        corredores livres. A ordem inversa colocaria alvos dentro das estantes,
+        que foi o bug de spawn ja diagnosticado no ambiente visual.
+        """
         cfg = self.config
 
-        self.obstaculos = gerar_layout_corredores(
-            self.rng,
+        obstaculos = gerar_layout_corredores(
+            rng,
             num_fileiras=cfg.num_fileiras,
             espessura_fileira=cfg.espessura_fileira,
             largura_corredor_min=cfg.largura_corredor_min,
@@ -395,7 +406,7 @@ class Ambiente:
 
         def sortear(distancia_minima_de=None, dist_min=0.0):
             for _ in range(200):
-                p = sortear_ponto_livre(self.rng, self.obstaculos)
+                p = sortear_ponto_livre(rng, obstaculos)
                 if p is None:
                     continue
                 if distancia_minima_de is not None and p.distance_to(distancia_minima_de) < dist_min:
@@ -403,21 +414,58 @@ class Ambiente:
                 return p
             return None
 
-        self.start_pos = sortear() or _vec(*cfg.start_fixo)
+        start = sortear() or _vec(*cfg.start_fixo)
         # Exige que o pacote fique longe do start e a entrega longe do pacote:
         # e o que forca o agente a atravessar corredores em vez de resolver
         # tudo dentro do mesmo trecho.
-        self.pacote_pos = sortear(self.start_pos, 280.0) or _vec(*cfg.pacote_fixo)
-        if cfg.objetivo_simples:
-            self.entrega_pos = self.pacote_pos
-        else:
-            self.entrega_pos = sortear(self.pacote_pos, 280.0) or _vec(*cfg.entrega_fixa)
+        pacote = sortear(start, 280.0) or _vec(*cfg.pacote_fixo)
+        entrega = pacote if cfg.objetivo_simples else (
+            sortear(pacote, 280.0) or _vec(*cfg.entrega_fixa))
 
-        self.robos_moveis = []
+        robos = []
         for _ in range(cfg.num_robos_moveis):
             p1 = sortear() or _vec(LARGURA / 2, ALTURA / 2)
             p2 = sortear() or _vec(LARGURA / 2, ALTURA / 2)
-            self.robos_moveis.append(RoboMovel(p1, p2, velocidade=self.rng.uniform(40, 90)))
+            robos.append((p1, p2, rng.uniform(40, 90)))
+
+        return {"obstaculos": obstaculos, "start": start, "pacote": pacote,
+                "entrega": entrega, "robos": robos}
+
+    def _aplicar_layout(self, layout: dict):
+        # Copia os vetores: o agente move self.start_pos por referencia se
+        # nao houver copia, e o layout do pool seria corrompido entre usos.
+        self.obstaculos = [pygame.Rect(r) for r in layout["obstaculos"]]
+        self.start_pos = pygame.Vector2(layout["start"])
+        self.pacote_pos = pygame.Vector2(layout["pacote"])
+        self.entrega_pos = pygame.Vector2(layout["entrega"])
+        self.robos_moveis = [RoboMovel(pygame.Vector2(p1), pygame.Vector2(p2), velocidade=v)
+                             for p1, p2, v in layout["robos"]]
+
+    def _resetar_cenario_corredores(self):
+        cfg = self.config
+
+        if cfg.layouts_fixos <= 0:
+            self._aplicar_layout(self._criar_layout_corredores(self.rng))
+            return
+
+        # Conjunto FIXO de layouts, reusado em todas as geracoes. Sorteando a
+        # cada geracao, a paisagem de aptidao fica nao estacionaria: a elite
+        # escolhida numa geracao enfrenta um problema diferente na seguinte, e
+        # a selecao acaba perseguindo sorteio de cenario em vez de competencia.
+        # Medido: 18,8 pp de desvio na taxa de entrega entre geracoes vizinhas.
+        if self._pool_layouts is None:
+            semente = (cfg.seed if cfg.seed is not None else 0) + 99991
+            rng_pool = random.Random(semente)
+            self._pool_layouts = [self._criar_layout_corredores(rng_pool)
+                                  for _ in range(cfg.layouts_fixos)]
+            self._idx_layout = 0
+            if cfg.layouts_fixos != cfg.cenarios_por_geracao:
+                print(f"[aviso] layouts_fixos={cfg.layouts_fixos} difere de "
+                      f"cenarios_por_geracao={cfg.cenarios_por_geracao}: as geracoes "
+                      f"verao subconjuntos diferentes e a aptidao volta a oscilar")
+
+        self._aplicar_layout(self._pool_layouts[self._idx_layout % len(self._pool_layouts)])
+        self._idx_layout += 1
 
     def _gerar_posicoes_validas(self) -> Tuple[pygame.Vector2, pygame.Vector2]:
         for _ in range(200):
