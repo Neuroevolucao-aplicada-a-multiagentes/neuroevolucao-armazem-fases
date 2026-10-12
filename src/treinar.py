@@ -16,7 +16,7 @@ from simulador import (
 from rede_transfer import RedeNeural, carregar_rede_base, salvar_melhor
 from metricas import Logger
 from gerar_graficos import plotar_run
-from services import TrainingPersistenceService
+from services import PersistenciaLocal, TrainingPersistenceService
 
 
 # geracoes minimas para uma run poder sobrescrever o checkpoint da fase
@@ -185,7 +185,8 @@ def _avaliar_em_cenarios(agentes, ambiente: Ambiente, cfg: CenarioConfig, dt: fl
     return media
 
 
-def treinar(cfg: CenarioConfig, modo: str = "headless", salvar_checkpoint=None):
+def treinar(cfg: CenarioConfig, modo: str = "headless", salvar_checkpoint=None,
+            persistir: bool = True):
     assert modo in ("headless", "visual")
 
     # Uma run curta (teste rapido) nao pode sobrescrever o checkpoint da fase:
@@ -205,7 +206,11 @@ def treinar(cfg: CenarioConfig, modo: str = "headless", salvar_checkpoint=None):
 
     melhor_fit_global = -float("inf")
 
-    persistence_service = TrainingPersistenceService()
+    if persistir:
+        persistence_service = TrainingPersistenceService()
+    else:
+        persistence_service = PersistenciaLocal()
+        print("[treinar] sem banco: a run fica so em disco, nada vai para o Supabase")
     run_id: str | None = None
 
     try:
@@ -614,6 +619,8 @@ if __name__ == "__main__":
                         help="Forca sobrescrever o checkpoint da fase")
     parser.add_argument("--nao-salvar", dest="salvar", action="store_false",
                         help="Nunca sobrescreve o checkpoint da fase")
+    parser.add_argument("--sem-banco", action="store_true",
+                        help="Treina sem gravar no Supabase; resultados ficam so em runs/")
     args = parser.parse_args()
 
     import importlib
@@ -625,4 +632,4 @@ if __name__ == "__main__":
         cfg.seed = args.seed
 
     treinar(cfg, modo="visual" if args.visual else "headless",
-            salvar_checkpoint=args.salvar)
+            salvar_checkpoint=args.salvar, persistir=not args.sem_banco)
